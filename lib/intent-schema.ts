@@ -1,6 +1,6 @@
 export const SWAP_TOOL = {
   name: "execute_defi_swap",
-  description: "Execute a token swap on Base Sepolia",
+  description: "Execute a token swap on Base mainnet",
   input_schema: {
     type: "object",
     properties: {

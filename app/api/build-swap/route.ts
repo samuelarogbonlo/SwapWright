@@ -1,40 +1,62 @@
-import { parseUnits } from "viem";
-import { getTokenBySymbol } from "@/lib/tokens";
+import { parseUnits, encodeFunctionData } from "viem";
+import { TOKENS } from "@/lib/tokens";
+import { UNISWAP_CONTRACTS, SWAP_ROUTER_02_ABI } from "@/lib/uniswap";
 
 export async function POST(req: Request) {
-  const { tokenIn, tokenOut, amountIn, slippage, from } = await req.json();
+  try {
+    const { tokenIn, tokenOut, amountIn, feeTier, minOutput, from } = await req.json();
 
-  const srcToken = getTokenBySymbol(tokenIn);
-  const dstToken = getTokenBySymbol(tokenOut);
+    if (!tokenIn || !tokenOut || !feeTier || !minOutput) {
+      return Response.json({ error: "Invalid parameters" }, { status: 400 });
+    }
 
-  if (!srcToken || !dstToken) {
-    return Response.json({ error: "Invalid token" }, { status: 400 });
+    const isSellingETH = tokenIn.symbol === "ETH";
+    const isBuyingETH = tokenOut.symbol === "ETH";
+
+    const poolTokenInAddress = isSellingETH
+      ? TOKENS.WETH.address
+      : (tokenIn.poolAddress as `0x${string}`);
+    const poolTokenOutAddress = isBuyingETH
+      ? TOKENS.WETH.address
+      : (tokenOut.poolAddress as `0x${string}`);
+
+    const amountWei = parseUnits(
+      amountIn.toString(),
+      isSellingETH ? 18 : tokenIn.decimals
+    );
+
+    // Build exactInputSingle calldata for SwapRouter02
+    const swapCalldata = encodeFunctionData({
+      abi: SWAP_ROUTER_02_ABI,
+      functionName: "exactInputSingle",
+      args: [
+        {
+          tokenIn: poolTokenInAddress,
+          tokenOut: poolTokenOutAddress,
+          fee: feeTier,
+          recipient: from as `0x${string}`,
+          amountIn: amountWei,
+          amountOutMinimum: BigInt(minOutput),
+          sqrtPriceLimitX96: 0n,
+        },
+      ],
+    });
+
+    return Response.json({
+      to: UNISWAP_CONTRACTS.SwapRouter02,
+      data: swapCalldata,
+      value: isSellingETH ? amountWei.toString() : "0",
+      gas: "200000", // Conservative estimate, actual gas will be calculated by wallet
+      tokenIn: {
+        symbol: tokenIn.symbol,
+        address: isSellingETH ? TOKENS.WETH.address : tokenIn.address,
+      },
+    });
+  } catch (error) {
+    console.error('build-swap failed:', error);
+    return Response.json(
+      { error: error instanceof Error ? error.message : 'Failed to build swap' },
+      { status: 500 }
+    );
   }
-
-  const amountWei = parseUnits(amountIn.toString(), srcToken.decimals);
-
-  const swapUrl = new URL("https://api.0x.org/swap/v1/quote");
-  swapUrl.searchParams.append("chainId", "84532"); // Base Sepolia
-  swapUrl.searchParams.append("sellToken", srcToken.address);
-  swapUrl.searchParams.append("buyToken", dstToken.address);
-  swapUrl.searchParams.append("sellAmount", amountWei.toString());
-  swapUrl.searchParams.append("takerAddress", from);
-  swapUrl.searchParams.append("slippagePercentage", (slippage / 100).toString()); // 0x uses 0.01 for 1%
-
-  const response = await fetch(swapUrl, {
-    headers: { "0x-api-key": process.env.ZEROX_API_KEY || "" }
-  });
-
-  if (!response.ok) {
-    return Response.json({ error: "Failed to build swap" }, { status: 500 });
-  }
-
-  const swapData = await response.json();
-
-  return Response.json({
-    to: swapData.to,
-    data: swapData.data,
-    value: swapData.value,
-    gas: swapData.estimatedGas
-  });
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { SwapInterface } from '@/components/SwapInterface';
 
 export default function Home() {
   return (
@@ -21,16 +22,14 @@ export default function Home() {
             </p>
           </div>
 
-          {/* Chat Interface Placeholder */}
-          <div className="bg-white dark:bg-gray-900 rounded-lg border p-6 min-h-[400px] flex items-center justify-center">
-            <p className="text-gray-500">Connect your wallet to start swapping</p>
-          </div>
+          {/* Swap Interface */}
+          <SwapInterface />
         </div>
       </main>
 
       {/* Footer */}
       <footer className="border-t p-4 text-center text-sm text-gray-600">
-        Built with Claude AI • 0x Protocol • Tenderly • Base
+        Built with Claude AI • Uniswap v3 • Tenderly • Base
       </footer>
     </div>
   );

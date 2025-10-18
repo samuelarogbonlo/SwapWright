@@ -16,18 +16,18 @@ SwapWright: [Shows preview] → [Simulates for safety] → [Executes swap]
 
 - 🗣️ **Natural Language** - Chat interface powered by Claude AI
 - 🔒 **Transaction Simulation** - Every swap is simulated before execution via Tenderly
-- ⚡ **Best Prices** - Aggregated routing through 0x Protocol
+- ⚡ **Best Prices** - Direct Uniswap v3 routing on Base
 - 🛡️ **Built-in Security** - Token whitelisting, spending limits, input validation
-- 🌐 **Base Sepolia Testnet** - Safe testing environment
+- 🌐 **Base Mainnet** - Live liquidity with real swaps
 
 ## Tech Stack
 
 - **Frontend**: Next.js 14, TypeScript, Tailwind CSS
 - **Web3**: Viem, Wagmi, RainbowKit
 - **AI**: Claude 3.5 Sonnet (Anthropic)
-- **DEX Aggregation**: 0x Protocol
+- **DEX Integration**: Uniswap v3 (Quoter + SwapRouter02)
 - **Security**: Tenderly Simulation
-- **Network**: Base Sepolia
+- **Network**: Base Mainnet
 
 ## Quick Start
 
