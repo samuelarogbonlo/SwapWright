@@ -10,14 +10,27 @@ This enables autonomous agents to:
 - ⚡ **Execute Swaps** on behalf of users or other agents
 - 🔗 **Compose** SwapWright into larger agent workflows
 
+
+
+**Flow:**
+1. Agent → `/metadata` - Discover SwapWright capabilities
+2. Agent → `/execute` - Request swap quote with parameters
+3. SwapWright → Claude AI - Parse intent & validate
+4. SwapWright → Uniswap V3 - Fetch best quote
+5. SwapWright → Tenderly - Simulate transaction
+6. SwapWright → Agent - Return quote + execution path
+7. Agent → User Wallet - Execute swap on-chain
+
 ---
 
 ## Quick Start
 
+**Base URL:** `https://swapwright.vercel.app`
+
 ### 1. Discover Service Capabilities
 
 ```bash
-curl http://localhost:3000/api/acp/metadata
+curl https://swapwright.vercel.app/api/acp/metadata
 ```
 
 **Response:**

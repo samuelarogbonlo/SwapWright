@@ -2,23 +2,26 @@
 
 **ChatGPT for DeFi swaps** - Just say what you want to trade in plain English.
 
+🎥 **[Watch Demo](https://www.loom.com/share/d31f559256ba4420a1bee456a27ab047?sid=c66feb17-21c5-4d51-a2b8-91f2df49becb)** | 🚀 **[Try It Live](https://swapwright.vercel.app)**
+
 ## What It Does
 
 SwapWright makes DeFi token swaps as easy as texting. No complex interfaces, no confusing parameters. Just natural language.
 
 **Example:**
 ```
-You: "Swap 0.1 ETH for USDC with low fees"
-SwapWright: [Shows preview] → [Simulates for safety] → [Executes swap]
+You: "Swap 0.1 ETH for USDC"
+SwapWright: [Fetches quote] → [Explains everything] → [Simulates] → [Executes]
 ```
 
 ## Key Features
 
 - 🗣️ **Natural Language** - Chat interface powered by Claude AI
-- 🔒 **Transaction Simulation** - Every swap is simulated before execution via Tenderly
-- ⚡ **Best Prices** - Direct Uniswap v3 routing on Base
-- 🛡️ **Built-in Security** - Token whitelisting, spending limits, input validation
-- 🌐 **Base Mainnet** - Live liquidity with real swaps
+- 🤖 **AI Copilot** - Explains quotes, gas costs, risks in plain English
+- 🔒 **Transaction Simulation** - Tenderly pre-execution validation
+- ⚡ **Best Prices** - Uniswap v3 routing on Base
+- 🔗 **Agent Communication Protocol** - Built for AI-to-AI integration
+- 📊 **Portfolio Watchdog** - Real-time Aave health monitoring
 
 ## Tech Stack
 
@@ -29,33 +32,12 @@ SwapWright: [Shows preview] → [Simulates for safety] → [Executes swap]
 - **Security**: Tenderly Simulation
 - **Network**: Base Mainnet
 
-## Quick Start
+## The Problem
 
-```bash
-# Install dependencies
-npm install
+DeFi has a $200B UX crisis. Last month, $500M+ in positions were liquidated after market volatility - not because traders didn't know what to do, but because traditional DEX interfaces are too slow and complicated to react in time.
 
-# Add environment variables to .env.local
-# (See .env.example)
-
-# Run development server
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000)
-
-## Why SwapWright?
-
-- **74%** of users abandon DeFi due to complexity
-- **$1.4B+** lost annually to MEV attacks and mistakes
-- **89.4%** of internet users don't own crypto yet
-
-We're making DeFi accessible to everyone.
-
-## License
-
-MIT
+SwapWright fixes this with conversational AI that both humans and autonomous agents can use.
 
 ---
 
-Built for Virtuals Protocol Ethereum AI Hackathon 2025
+Built for **Virtuals Protocol Ethereum AI Hackathon 2025**
