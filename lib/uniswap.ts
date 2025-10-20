@@ -6,11 +6,18 @@ export const UNISWAP_CONTRACTS = {
 } as const;
 
 export function getBaseRpcUrl() {
-  const url = process.env.BASE_RPC_URL;
-  if (!url) {
-    throw new Error("BASE_RPC_URL environment variable is missing");
+  // Primary: Alchemy
+  if (process.env.NEXT_PUBLIC_ALCHEMY_API_KEY) {
+    return `https://base-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`;
   }
-  return url;
+
+  // Fallback: Public Base RPC
+  if (process.env.BASE_RPC_URL) {
+    return process.env.BASE_RPC_URL;
+  }
+
+  // Last resort: Public endpoint
+  return 'https://mainnet.base.org';
 }
 
 // Fee tiers (basis points)

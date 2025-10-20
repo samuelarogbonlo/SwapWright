@@ -1,9 +1,19 @@
 'use client';
 
-import { useState } from 'react';
+import {
+  useState,
+  useEffect,
+  forwardRef,
+  useImperativeHandle,
+  useCallback,
+  useMemo,
+} from 'react';
 import { useAccount, useSendTransaction, useWaitForTransactionReceipt } from 'wagmi';
-import { formatUnits, parseUnits } from 'viem';
+import { parseUnits } from 'viem';
 import { UNISWAP_CONTRACTS } from '@/lib/uniswap';
+import { TransactionPreview } from './TransactionPreview';
+import { TransactionReceipt } from './TransactionReceipt';
+import { ApprovalStep } from './ApprovalStep';
 
 interface ParsedIntent {
   token_in: string;
@@ -36,14 +46,42 @@ interface SimulationResult {
   error?: string;
 }
 
-type SwapStep = 'input' | 'parsed' | 'quote' | 'approval_needed' | 'approving' | 'simulated' | 'executing' | 'complete';
+type SwapStep =
+  | 'input'
+  | 'parsed'
+  | 'quote'
+  | 'approval_needed'
+  | 'approving'
+  | 'simulated'
+  | 'executing'
+  | 'complete';
 
-export function SwapInterface() {
+export interface SwapInterfaceHandle {
+  simulate: () => Promise<void>;
+  execute: () => Promise<void>;
+}
+
+interface SwapInterfaceProps {
+  pendingIntent?: {
+    tokenIn: string;
+    tokenOut: string;
+    amount: string;
+  } | null;
+  pendingSlippage?: number | null;
+  onClearIntent?: () => void;
+  onClearSlippage?: () => void;
+  onContextUpdate?: (updates: any) => void;
+}
+
+export const SwapInterface = forwardRef<SwapInterfaceHandle, SwapInterfaceProps>(function SwapInterface(
+  props,
+  ref
+) {
+  const { pendingIntent, pendingSlippage, onClearIntent, onClearSlippage, onContextUpdate } = props;
   const { address, isConnected } = useAccount();
   const { sendTransaction, data: txHash } = useSendTransaction();
   const { isLoading: isTxPending, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 
-  const [input, setInput] = useState('');
   const [step, setStep] = useState<SwapStep>('input');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,92 +91,145 @@ export function SwapInterface() {
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [txData, setTxData] = useState<any>(null);
   const [needsApproval, setNeedsApproval] = useState(false);
+  const [isApprovingToken, setIsApprovingToken] = useState(false);
+  const [slippageTolerance, setSlippageTolerance] = useState<number>(0.5);
 
-  const handleParseIntent = async () => {
-    if (!input.trim()) {
-      setError('Please enter a swap request');
-      return;
-    }
+  const quoteRoute = useMemo(() => {
+    if (!parsedIntent) return '';
+    return `${parsedIntent.token_in} → ${parsedIntent.token_out}`;
+  }, [parsedIntent]);
 
-    setLoading(true);
-    setError(null);
-    setParsedIntent(null);
+  const fetchQuoteForIntent = useCallback(
+    async (intent: ParsedIntent, slippage: number, clearIntent = false, clearSlippage = false) => {
+      setLoading(true);
+      setError(null);
 
-    try {
-      const response = await fetch('/api/parse-intent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input }),
-      });
+      try {
+        const response = await fetch('/api/get-quote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tokenIn: intent.token_in,
+            tokenOut: intent.token_out,
+            amountIn: intent.amount_in,
+            slippage,
+          }),
+        });
 
-      if (!response.ok) {
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Failed to get quote');
+        }
+
         const data = await response.json();
-        throw new Error(data.error || 'Failed to parse intent');
+        setQuote({ ...data, price: Number(data.price) });
+        setStep('quote');
+
+        if (onContextUpdate) {
+          // Calculate price impact: (expected_price - actual_price) / expected_price * 100
+          // Actual price from quote is already calculated in the API response
+          // For a swap, price impact can be estimated from the difference between
+          // expected output at spot price vs actual output from the AMM
+          const priceImpact = data.priceImpact || 0;
+
+          onContextUpdate({
+            tokenIn: intent.token_in,
+            tokenOut: intent.token_out,
+            amount: intent.amount_in.toString(),
+            quote: {
+              expectedOutput: data.expectedOutput,
+              minOutput: data.minOutput,
+              estimatedGas: data.estimatedGas,
+              feeTier: data.feeTier,
+              route: `${intent.token_in} → ${intent.token_out}`,
+              priceImpact,
+            },
+            slippage,
+          });
+        }
+
+        if (clearIntent && onClearIntent) onClearIntent();
+        if (clearSlippage && onClearSlippage) onClearSlippage();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to get quote');
+      } finally {
+        setLoading(false);
       }
+    },
+    [onClearIntent, onClearSlippage, onContextUpdate]
+  );
 
-      const data = await response.json();
+  // Handle copilot intent
+  useEffect(() => {
+    if (!pendingIntent) return;
+    const intent: ParsedIntent = {
+      token_in: pendingIntent.tokenIn,
+      token_out: pendingIntent.tokenOut,
+      amount_in: parseFloat(pendingIntent.amount),
+    };
+    setParsedIntent(intent);
+    setStep('parsed');
 
-      if (!data.intent) {
-        throw new Error('Could not understand your request. Try: "Swap 0.1 ETH for USDC"');
-      }
+    const incomingSlippage =
+      intent.slippage_tolerance ??
+      (typeof pendingSlippage === 'number' ? pendingSlippage : slippageTolerance);
+    setSlippageTolerance(incomingSlippage);
 
-      setParsedIntent(data.intent);
-      setStep('parsed');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  };
+    fetchQuoteForIntent(intent, incomingSlippage, true, typeof pendingSlippage === 'number');
+  }, [pendingIntent, pendingSlippage, fetchQuoteForIntent, slippageTolerance]);
 
-  const handleGetQuote = async () => {
+  // Handle slippage-only updates
+  useEffect(() => {
+    if (pendingSlippage === null || pendingSlippage === undefined) return;
     if (!parsedIntent) return;
+    setSlippageTolerance(pendingSlippage);
+    fetchQuoteForIntent(parsedIntent, pendingSlippage, false, true);
+  }, [pendingSlippage, parsedIntent, fetchQuoteForIntent]);
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/get-quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tokenIn: parsedIntent.token_in,
-          tokenOut: parsedIntent.token_out,
-          amountIn: parsedIntent.amount_in,
-        }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to get quote');
-      }
-
-      const data = await response.json();
-      setQuote({ ...data, price: Number(data.price) });
-      setStep('quote');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get quote');
-    } finally {
+  // Handle approval transaction success
+  useEffect(() => {
+    if (isApprovingToken && isTxSuccess && step === 'approving') {
+      setIsApprovingToken(false);
       setLoading(false);
+      setTimeout(() => {
+        handleSimulate();
+      }, 3000);
     }
-  };
+  }, [isTxSuccess, isApprovingToken, step]);
 
-  const handleSimulateAndExecute = async () => {
+  // Update context with transaction status
+  useEffect(() => {
+    if (!txHash || !onContextUpdate) return;
+    const status: 'pending' | 'success' | 'failed' = isTxSuccess
+      ? 'success'
+      : isTxPending
+      ? 'pending'
+      : 'failed';
+
+    onContextUpdate({
+      transaction: {
+        hash: txHash,
+        status,
+      },
+    });
+  }, [txHash, isTxPending, isTxSuccess, onContextUpdate]);
+
+  const handleFetchQuote = useCallback(() => {
+    if (!parsedIntent) return;
+    fetchQuoteForIntent(parsedIntent, slippageTolerance);
+  }, [parsedIntent, slippageTolerance, fetchQuoteForIntent]);
+
+  const handleSimulate = useCallback(async () => {
     if (!parsedIntent || !address || !quote) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      // Check if selling ERC-20 token (not ETH) - needs approval
       const isSellingERC20 = quote.tokenIn.symbol !== 'ETH';
 
       if (isSellingERC20) {
-        // Check approval for ERC-20 token
-        const amountWei = parseUnits(
-          parsedIntent.amount_in.toString(),
-          quote.tokenIn.decimals
-        );
+        const amountWei = parseUnits(parsedIntent.amount_in.toString(), quote.tokenIn.decimals);
 
         const approvalCheck = await fetch('/api/check-approval', {
           method: 'POST',
@@ -165,7 +256,6 @@ export function SwapInterface() {
         }
       }
 
-      // 1. Build swap transaction
       const buildResponse = await fetch('/api/build-swap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -187,7 +277,6 @@ export function SwapInterface() {
       const txDataResponse = await buildResponse.json();
       setTxData(txDataResponse);
 
-      // 2. Simulate transaction
       const simResponse = await fetch('/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -207,30 +296,50 @@ export function SwapInterface() {
       const simResult = await simResponse.json();
       setSimulation(simResult);
 
+      if (onContextUpdate) {
+        onContextUpdate({
+          simulation: {
+            success: simResult.success,
+            gasUsed: simResult.gasUsed,
+            error: simResult.error,
+          },
+        });
+      }
+
       if (!simResult.success) {
         throw new Error(`Transaction would fail: ${simResult.error || 'Unknown error'}`);
       }
 
+      setNeedsApproval(false);
       setStep('simulated');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Simulation failed');
+      const message = err instanceof Error ? err.message : 'Simulation failed';
+      setError(message);
+      if (onContextUpdate) {
+        onContextUpdate({
+          simulation: {
+            success: false,
+            error: message,
+          },
+        });
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [parsedIntent, address, quote, onContextUpdate]);
 
-  const handleApprove = async () => {
+  const handleApprove = async (isUnlimited: boolean) => {
     if (!parsedIntent || !address || !quote) return;
 
     setLoading(true);
     setError(null);
     setStep('approving');
+    setIsApprovingToken(true);
 
     try {
-      const amountWei = parseUnits(
-        parsedIntent.amount_in.toString(),
-        quote.tokenIn.decimals
-      );
+      const amountWei = isUnlimited
+        ? '115792089237316195423570985008687907853269984665640564039457584007913129639935'
+        : parseUnits(parsedIntent.amount_in.toString(), quote.tokenIn.decimals).toString();
 
       const approvalResponse = await fetch('/api/build-approval', {
         method: 'POST',
@@ -238,7 +347,7 @@ export function SwapInterface() {
         body: JSON.stringify({
           tokenAddress: quote.tokenIn.poolAddress,
           spenderAddress: UNISWAP_CONTRACTS.SwapRouter02,
-          amount: amountWei.toString(),
+          amount: amountWei,
         }),
       });
 
@@ -253,20 +362,15 @@ export function SwapInterface() {
         data: approvalTx.data as `0x${string}`,
         value: 0n,
       });
-
-      // Wait for approval, then retry simulation
-      setTimeout(() => {
-        handleSimulateAndExecute();
-      }, 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Approval failed');
       setStep('quote');
-    } finally {
+      setIsApprovingToken(false);
       setLoading(false);
     }
   };
 
-  const handleExecuteSwap = async () => {
+  const handleExecuteSwap = useCallback(async () => {
     if (!txData) return;
 
     setLoading(true);
@@ -279,25 +383,41 @@ export function SwapInterface() {
         data: txData.data as `0x${string}`,
         value: BigInt(txData.value || '0'),
       });
-
-      setStep('complete');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Transaction failed');
       setStep('simulated');
+      if (onContextUpdate && txHash) {
+        onContextUpdate({
+          transaction: {
+            hash: txHash,
+            status: 'failed',
+          },
+        });
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [txData, sendTransaction, onContextUpdate, txHash]);
 
   const handleReset = () => {
-    setInput('');
     setStep('input');
     setParsedIntent(null);
     setQuote(null);
     setSimulation(null);
     setTxData(null);
     setError(null);
+    setNeedsApproval(false);
+    setSlippageTolerance(0.5);
   };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      simulate: () => handleSimulate(),
+      execute: () => handleExecuteSwap(),
+    }),
+    [handleSimulate, handleExecuteSwap]
+  );
 
   if (!isConnected) {
     return (
@@ -309,49 +429,15 @@ export function SwapInterface() {
 
   return (
     <div className="space-y-4">
-      {/* Input Step */}
       {step === 'input' && (
-        <div className="bg-white dark:bg-gray-900 rounded-lg border p-6 space-y-4">
-          <div>
-            <label htmlFor="swap-input" className="block text-sm font-medium mb-2 text-gray-700">
-              What would you like to swap?
-            </label>
-            <textarea
-              id="swap-input"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleParseIntent();
-                }
-              }}
-              placeholder='Try: "Swap 0.1 ETH for USDC"'
-              className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-black dark:text-white bg-white dark:bg-gray-800"
-              rows={3}
-              disabled={loading}
-            />
-            <p className="text-xs text-gray-500 mt-2">Press Enter to submit</p>
-          </div>
-          <button
-            onClick={handleParseIntent}
-            disabled={loading || !input.trim()}
-            className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Parsing with Claude AI...
-              </span>
-            ) : 'Parse Intent'}
-          </button>
+        <div className="bg-white dark:bg-gray-900 rounded-lg border p-6 space-y-2 text-center">
+          <h3 className="font-semibold text-lg text-gray-900 dark:text-white">Waiting for Copilot</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            Ask the AI Copilot to start a swap. Quote details will appear here automatically.
+          </p>
         </div>
       )}
 
-      {/* Parsed Intent */}
       {parsedIntent && step === 'parsed' && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-6 space-y-3">
           <h3 className="font-semibold text-green-900 text-lg">✓ Intent Parsed</h3>
@@ -370,60 +456,25 @@ export function SwapInterface() {
             </div>
           </div>
           <button
-            onClick={handleGetQuote}
+            onClick={handleFetchQuote}
             disabled={loading}
             className="w-full bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 transition-colors"
           >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Finding best price via Uniswap V3...
-              </span>
-            ) : 'Get Quote'}
+            Fetch Quote
           </button>
         </div>
       )}
 
-      {/* Quote Display */}
       {quote && step === 'quote' && parsedIntent && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 space-y-4">
-          <h3 className="font-semibold text-blue-900 text-lg">✓ Quote Ready</h3>
-
-          <div className="bg-white rounded-lg p-4 border space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600">You Pay:</span>
-              <span className="font-semibold text-lg">{parsedIntent.amount_in} {quote.tokenIn.symbol}</span>
-            </div>
-
-            <div className="border-t pt-3">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-600">You Receive:</span>
-                <span className="font-semibold text-lg text-blue-700">
-                  ~{parseFloat(
-                    formatUnits(BigInt(quote.expectedOutput), quote.tokenOut.poolDecimals)
-                  ).toFixed(4)} {quote.tokenOut.symbol}
-                </span>
-              </div>
-              <p className="text-xs text-gray-500 mt-1 text-right">
-                Rate: 1 {quote.tokenIn.symbol} = {quote.price.toFixed(2)} {quote.tokenOut.symbol}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex justify-between text-xs text-gray-600">
-            <span>Pool Fee:</span>
-            <span>{(quote.feeTier / 10000).toFixed(2)}%</span>
-          </div>
-
-          <div className="text-xs text-gray-600 bg-white rounded p-2 border">
-            <span className="font-medium">💱 Powered by Uniswap V3</span> on Base
-          </div>
+        <div className="space-y-4">
+          <TransactionPreview
+            quote={quote}
+            amountIn={parsedIntent.amount_in}
+            slippage={slippageTolerance}
+          />
 
           <button
-            onClick={handleSimulateAndExecute}
+            onClick={handleSimulate}
             disabled={loading}
             className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 transition-colors"
           >
@@ -435,40 +486,23 @@ export function SwapInterface() {
                 </svg>
                 Simulating via Tenderly...
               </span>
-            ) : 'Simulate & Review'}
+            ) : (
+              'Simulate & Review'
+            )}
           </button>
         </div>
       )}
 
-      {/* Approval Needed */}
-      {step === 'approval_needed' && quote && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 space-y-3">
-          <h3 className="font-semibold text-yellow-900 text-lg">⚠️ Approval Required</h3>
-          <p className="text-sm text-gray-700">
-            You need to approve {quote.tokenIn.symbol} before swapping. This is a one-time step.
-          </p>
-          <div className="text-xs text-gray-600 bg-white rounded p-2 border">
-            This allows Uniswap to swap your {quote.tokenIn.symbol} tokens.
-          </div>
-          <button
-            onClick={handleApprove}
-            disabled={loading}
-            className="w-full bg-yellow-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-yellow-700 disabled:bg-gray-300 transition-colors"
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Approving...
-              </span>
-            ) : 'Approve Token'}
-          </button>
-        </div>
+      {step === 'approval_needed' && quote && parsedIntent && (
+        <ApprovalStep
+          token={quote.tokenIn}
+          amount={parsedIntent.amount_in}
+          spenderName="Uniswap Router"
+          onApprove={handleApprove}
+          loading={loading}
+        />
       )}
 
-      {/* Approving */}
       {step === 'approving' && isTxPending && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
           <p className="text-yellow-900 font-semibold">⏳ Approval Pending...</p>
@@ -476,7 +510,6 @@ export function SwapInterface() {
         </div>
       )}
 
-      {/* Simulation Result */}
       {simulation && step === 'simulated' && (
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-6 space-y-3">
           <h3 className="font-semibold text-purple-900 text-lg">✓ Simulation Passed</h3>
@@ -497,12 +530,13 @@ export function SwapInterface() {
                 </svg>
                 Executing swap...
               </span>
-            ) : 'Execute Swap'}
+            ) : (
+              'Execute Swap'
+            )}
           </button>
         </div>
       )}
 
-      {/* Executing */}
       {step === 'executing' && isTxPending && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
           <p className="text-yellow-900 font-semibold">⏳ Transaction Pending...</p>
@@ -510,53 +544,16 @@ export function SwapInterface() {
         </div>
       )}
 
-      {/* Complete */}
       {step === 'complete' && isTxSuccess && txHash && quote && parsedIntent && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-6 space-y-4">
-          <div className="text-center">
-            <div className="text-5xl mb-2">🎉</div>
-            <h3 className="font-bold text-green-900 text-2xl">Swap Complete!</h3>
-          </div>
-
-          <div className="bg-white rounded-lg p-4 border space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600">You Sent:</span>
-              <span className="font-semibold text-lg">{parsedIntent.amount_in} {quote.tokenIn.symbol}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600">You Received:</span>
-              <span className="font-semibold text-lg text-green-700">
-                ~{parseFloat(
-                  formatUnits(BigInt(quote.expectedOutput), quote.tokenOut.poolDecimals)
-                ).toFixed(4)} {quote.tokenOut.symbol}
-              </span>
-            </div>
-          </div>
-
-          <div className="text-xs text-gray-600 bg-white rounded p-3 border">
-            <p className="font-medium mb-1">Transaction Hash:</p>
-            <p className="font-mono break-all text-gray-800">{txHash}</p>
-          </div>
-
-          <a
-            href={`https://basescan.org/tx/${txHash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 text-center transition-colors"
-          >
-            View on BaseScan →
-          </a>
-
-          <button
-            onClick={handleReset}
-            className="w-full bg-gray-200 text-gray-800 py-3 px-4 rounded-lg font-medium hover:bg-gray-300 transition-colors"
-          >
-            New Swap
-          </button>
-        </div>
+        <TransactionReceipt
+          quote={quote}
+          amountIn={parsedIntent.amount_in}
+          txHash={txHash}
+          simulation={simulation || undefined}
+          onNewSwap={handleReset}
+        />
       )}
 
-      {/* Error Display */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-2">
           <div className="flex items-start gap-2">
@@ -565,11 +562,9 @@ export function SwapInterface() {
               <p className="text-red-900 font-semibold">Something went wrong</p>
               <p className="text-red-800 text-sm mt-1">
                 {error.includes('insufficient funds')
-                  ? 'You don\'t have enough tokens to complete this swap. Please check your balance.'
+                  ? "You don't have enough tokens to complete this swap. Please check your balance."
                   : error.includes('No liquidity pool')
-                  ? 'This token pair doesn\'t have enough liquidity. Try a different amount or token pair.'
-                  : error.includes('parse intent')
-                  ? 'We couldn\'t understand your request. Try something like: "Swap 0.1 ETH for USDC"'
+                  ? "This token pair doesn't have enough liquidity. Try a different amount or token pair."
                   : error.includes('User rejected')
                   ? 'Transaction was cancelled in your wallet.'
                   : error}
@@ -587,10 +582,9 @@ export function SwapInterface() {
         </div>
       )}
 
-      {/* Wallet Info */}
       <div className="text-xs text-gray-500 text-center">
         Connected: {address?.slice(0, 6)}...{address?.slice(-4)}
       </div>
     </div>
   );
-}
+});
