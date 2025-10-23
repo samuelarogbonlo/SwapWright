@@ -79,7 +79,7 @@ export const SwapInterface = forwardRef<SwapInterfaceHandle, SwapInterfaceProps>
 ) {
   const { pendingIntent, pendingSlippage, onClearIntent, onClearSlippage, onContextUpdate } = props;
   const { address, isConnected } = useAccount();
-  const { sendTransaction, data: txHash } = useSendTransaction();
+  const { sendTransaction, data: txHash, reset: resetTx } = useSendTransaction();
   const { isLoading: isTxPending, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 
   const [step, setStep] = useState<SwapStep>('input');
@@ -186,6 +186,20 @@ export const SwapInterface = forwardRef<SwapInterfaceHandle, SwapInterfaceProps>
     fetchQuoteForIntent(parsedIntent, pendingSlippage, false, true);
   }, [pendingSlippage, parsedIntent, fetchQuoteForIntent]);
 
+  // Reset handler
+  const handleReset = useCallback(() => {
+    setStep('input');
+    setParsedIntent(null);
+    setQuote(null);
+    setSimulation(null);
+    setTxData(null);
+    setError(null);
+    setNeedsApproval(false);
+    setIsApprovingToken(false);
+    setSlippageTolerance(0.5);
+    resetTx(); // Clear txHash from wagmi
+  }, [resetTx]);
+
   // Handle approval transaction success
   useEffect(() => {
     if (isApprovingToken && isTxSuccess && step === 'approving') {
@@ -196,6 +210,21 @@ export const SwapInterface = forwardRef<SwapInterfaceHandle, SwapInterfaceProps>
       }, 3000);
     }
   }, [isTxSuccess, isApprovingToken, step]);
+
+  // Handle swap transaction success - advance to complete and auto-reset
+  useEffect(() => {
+    if (isTxSuccess && step === 'executing' && !isApprovingToken) {
+      setStep('complete');
+      setLoading(false);
+
+      // Auto-reset after 5 seconds to allow new swaps
+      const resetTimer = setTimeout(() => {
+        handleReset();
+      }, 5000);
+
+      return () => clearTimeout(resetTimer);
+    }
+  }, [isTxSuccess, step, isApprovingToken, handleReset]);
 
   // Update context with transaction status
   useEffect(() => {
@@ -398,17 +427,6 @@ export const SwapInterface = forwardRef<SwapInterfaceHandle, SwapInterfaceProps>
       setLoading(false);
     }
   }, [txData, sendTransaction, onContextUpdate, txHash]);
-
-  const handleReset = () => {
-    setStep('input');
-    setParsedIntent(null);
-    setQuote(null);
-    setSimulation(null);
-    setTxData(null);
-    setError(null);
-    setNeedsApproval(false);
-    setSlippageTolerance(0.5);
-  };
 
   useImperativeHandle(
     ref,

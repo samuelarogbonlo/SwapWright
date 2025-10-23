@@ -300,11 +300,38 @@ export async function getEnhancedCopilotResponse(
       ? response.content[0].text
       : '';
 
-    // Generate transaction preview data if quote is available
+    // Attempt to parse the model response once so we can inspect the action and message
+    let parsedResponse: any | null = null;
+    try {
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsedResponse = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      parsedResponse = null;
+    }
+
+    const actionType = parsedResponse?.action?.type;
+    const normalizedMessage = userMessage.trim().toLowerCase();
+    const isAutoSwapSummary = ['show quote', 'simulation result', 'transaction result'].includes(normalizedMessage);
+    const isSwapAction =
+      isAutoSwapSummary ||
+      (actionType && ['fetch_quote', 'modify_params', 'simulate', 'execute_swap'].includes(actionType));
+
+    // Generate transaction preview data ONLY when we're showing the quote result
+    // NOT when fetching/modifying (to avoid showing stale data before new quote arrives)
+    // NOT for simulation results (we don't want to create a new card after simulation)
     let transactionData: TransactionPreviewData | undefined;
     let showActions = false;
 
-    if (swapContext.quote && swapContext.tokenIn && swapContext.tokenOut && swapContext.amount) {
+    const shouldShowTransactionCard =
+      normalizedMessage === 'show quote' &&
+      swapContext.quote &&
+      swapContext.tokenIn &&
+      swapContext.tokenOut &&
+      swapContext.amount;
+
+    if (shouldShowTransactionCard) {
       const quote = swapContext.quote;
 
       // Format token amounts with proper decimals
@@ -344,31 +371,26 @@ export async function getEnhancedCopilotResponse(
     }
 
     // Try to parse structured JSON response
-    try {
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-
-        // Add suggestions after successful swap
-        let suggestions;
-        if (swapContext.transaction?.status === 'success' && marketContext && swapContext.tokenOut && swapContext.amount) {
-          suggestions = generateSuggestedActions(swapContext.tokenOut, swapContext.amount, marketContext);
-        }
-
-        // CRITICAL: Only use parsed.message, never fall back to responseText
-        // If parsed.message is missing, use a default message
-        const cleanMessage = parsed.message || "I've processed your request.";
-
-        return {
-          message: cleanMessage,
-          action: parsed.action,
-          suggestions,
-          riskWarnings: riskAssessment?.warnings,
-          transactionData,
-          showActions,
-        };
+    if (parsedResponse) {
+      // Add suggestions after successful swap
+      let suggestions;
+      if (swapContext.transaction?.status === 'success' && marketContext && swapContext.tokenOut && swapContext.amount) {
+        suggestions = generateSuggestedActions(swapContext.tokenOut, swapContext.amount, marketContext);
       }
-    } catch (e) {
+
+      const cleanMessage = parsedResponse.message || "I've processed your request.";
+
+      return {
+        message: cleanMessage,
+        action: parsedResponse.action,
+        suggestions,
+        riskWarnings: riskAssessment?.warnings,
+        transactionData,
+        showActions,
+      };
+    }
+
+    try {
       // JSON parsing failed - try to extract message from malformed JSON
       const messageMatch = responseText.match(/"message"\s*:\s*"([^"]+)"/);
       if (messageMatch) {
@@ -381,12 +403,23 @@ export async function getEnhancedCopilotResponse(
         };
       }
       // Fall through to return plain text
+    } catch (e) {
+      // Ignore parsing errors and fall through
     }
 
     // Add suggestions for non-JSON responses too
     let suggestions;
-    if (swapContext.transaction?.status === 'success' && marketContext && swapContext.tokenOut && swapContext.amount) {
-      suggestions = generateSuggestedActions(swapContext.tokenOut, swapContext.amount, marketContext);
+    if (
+      swapContext.transaction?.status === 'success' &&
+      marketContext &&
+      swapContext.tokenOut &&
+      swapContext.amount
+    ) {
+      suggestions = generateSuggestedActions(
+        swapContext.tokenOut,
+        swapContext.amount,
+        marketContext
+      );
     }
 
     return {

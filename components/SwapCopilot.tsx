@@ -55,14 +55,6 @@ export function SwapCopilot({
     }
   }, [transcript]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
   const handleSend = async () => {
     if (!input.trim() || loading) return;
 

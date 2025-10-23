@@ -104,15 +104,39 @@ export function validateInput(input: string): {
 
 /**
  * Rate limiting using in-memory store
- * In production, use Redis or similar
+ * In production, use Redis or similar for multi-instance deployments
  */
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 
+/**
+ * Production-ready rate limiting with environment-based configuration
+ *
+ * @param identifier - Unique identifier (IP, agentId, API key, etc.)
+ * @param maxRequests - Max requests per window (defaults from env or 30)
+ * @param windowMs - Time window in milliseconds (default 60s)
+ */
 export function checkRateLimit(
   identifier: string,
-  maxRequests: number = 20,
+  maxRequests?: number,
   windowMs: number = 60000
 ): { allowed: boolean; remaining: number; resetAt: number } {
+  // Environment-based rate limit configuration
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  const isLocalhost = identifier === '::1' || identifier === '127.0.0.1';
+
+  // Development bypass: unlimited requests from localhost
+  if (isDevelopment && isLocalhost) {
+    return {
+      allowed: true,
+      remaining: 999,
+      resetAt: Date.now() + windowMs,
+    };
+  }
+
+  // Use env-configured limit or provided limit or default (30)
+  const effectiveLimit = maxRequests ??
+    parseInt(process.env.RATE_LIMIT_REQUESTS || '30', 10);
+
   const now = Date.now();
   const record = rateLimitStore.get(identifier);
 
@@ -134,12 +158,12 @@ export function checkRateLimit(
     });
     return {
       allowed: true,
-      remaining: maxRequests - 1,
+      remaining: effectiveLimit - 1,
       resetAt: now + windowMs,
     };
   }
 
-  if (record.count >= maxRequests) {
+  if (record.count >= effectiveLimit) {
     return {
       allowed: false,
       remaining: 0,
@@ -150,7 +174,7 @@ export function checkRateLimit(
   record.count++;
   return {
     allowed: true,
-    remaining: maxRequests - record.count,
+    remaining: effectiveLimit - record.count,
     resetAt: record.resetAt,
   };
 }
