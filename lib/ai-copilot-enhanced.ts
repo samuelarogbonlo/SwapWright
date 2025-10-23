@@ -332,7 +332,10 @@ export async function getEnhancedCopilotResponse(
       swapContext.amount;
 
     if (shouldShowTransactionCard) {
-      const quote = swapContext.quote;
+      const quote = swapContext.quote!; // Already checked in shouldShowTransactionCard
+      const tokenIn = swapContext.tokenIn!; // Already checked in shouldShowTransactionCard
+      const tokenOut = swapContext.tokenOut!; // Already checked in shouldShowTransactionCard
+      const amount = swapContext.amount!; // Already checked in shouldShowTransactionCard
 
       // Format token amounts with proper decimals
       const formatTokenAmount = (rawAmount: string, tokenSymbol: string): string => {
@@ -345,15 +348,15 @@ export async function getEnhancedCopilotResponse(
         }
       };
 
-      const expectedOutput = formatTokenAmount(quote.expectedOutput, swapContext.tokenOut);
-      const minOutput = formatTokenAmount(quote.minOutput, swapContext.tokenOut);
-      const exchangeRate = `1 ${swapContext.tokenIn} = ${(Number(expectedOutput.replace(/,/g, '')) / Number(swapContext.amount)).toFixed(2)} ${swapContext.tokenOut}`;
+      const expectedOutput = formatTokenAmount(quote.expectedOutput, tokenOut);
+      const minOutput = formatTokenAmount(quote.minOutput, tokenOut);
+      const exchangeRate = `1 ${tokenIn} = ${(Number(expectedOutput.replace(/,/g, '')) / Number(amount)).toFixed(2)} ${tokenOut}`;
 
       transactionData = {
-        youPay: swapContext.amount,
-        youPayToken: swapContext.tokenIn,
+        youPay: amount,
+        youPayToken: tokenIn,
         youReceive: expectedOutput,
-        youReceiveToken: swapContext.tokenOut,
+        youReceiveToken: tokenOut,
         exchangeRate,
         route: quote.route,
         poolFeeTier: `${quote.feeTier / 10000}%`,
